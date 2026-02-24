@@ -16,12 +16,11 @@ export interface SyntheticPatient {
   dateOfBirth: string
   memberId: string
   groupNumber: string
-  tradingPartnerServiceId: string
+  payerId: string
   insurancePlan: string
   primaryCareProvider: string
   scenario: EligibilityScenario
   scenarioLabel: string
-  narrativeContext: string
   subscriberFirstName: string
   subscriberLastName: string
   subscriberDob: string

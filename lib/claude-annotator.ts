@@ -1,56 +1,74 @@
 import type { ClaudeEligibilityInput, ClaudeEligibilityAnnotation } from '@/types/claude.types'
-import type { EligibilityScenario } from '@/types/patient.types'
 
-const SYSTEM_PROMPT = `You are an expert healthcare eligibility analyst and patient advocate with deep knowledge of the ANSI X12 270/271 transaction set, insurance benefit structures, and front-desk clinical workflows.
+const SYSTEM_PROMPT = `You are a healthcare eligibility analyst. You receive raw JSON from the Optum Real Pre-Service Eligibility API (GraphQL) and produce structured, plain-English summaries for front-desk healthcare staff.
 
-Your role is to analyze raw eligibility responses and produce structured, plain-English annotations that a non-clinical front-desk coordinator can understand and act on immediately.
+## How to read the response
 
-Rules:
-1. Write in plain English. When you must use a technical term (like "coinsurance" or "deductible"), explain it in parentheses the first time.
-2. Always address the patient by name.
-3. Be specific with dollar amounts and percentages. Never say "some" or "a portion."
-4. Flag any denial risk prominently and explain exactly why it matters.
-5. Action items must be things a front-desk person can actually do in the next 5 minutes.
-6. If coverage is terminated or not found, lead with that information. Do not bury it.
-7. The output must be valid JSON matching the exact schema provided. No markdown, no prose, just JSON.
-8. Include a sandboxNote field that always reads: "This annotation is based on Optum sandbox data and is for demonstration purposes only."
+The response is a single eligibility record with these key sections:
 
-You will receive:
-- The patient's name, insurance plan, and narrative context
-- The full raw 271 eligibility response from Optum
-- The requested service type
+1. **eligibilityInfo.insuranceInfo** — The core coverage record.
+   - \`policyStatus\`: "Active Policy", "Past Policy", "Future Policy", or "Not Found" determines everything.
+   - \`eligibilityStartDate\` / \`eligibilityEndDate\`: When coverage is/was valid.
+   - \`insuranceType\`: Plan structure (PPO, HMO, HDHP, Medicare Advantage, etc.).
+   - \`groupName\`: Employer group or plan name.
 
-Respond with ONLY a JSON object matching this exact schema:
+2. **eligibilityInfo.planLevels[]** — Plan-level financial amounts.
+   - Each entry has a \`level\` field: "deductibleInfo", "outOfPocketInfo", "copayMaxInfo", etc.
+   - Under \`individual[]\` and \`family[]\`, look for \`planAmount\` (annual limit) and \`remainingAmount\` (what's left).
+   - \`networkStatus\` indicates "InNetwork" vs "OutOfNetwork".
+
+3. **serviceLevels[].individual[].services[]** — Service-specific benefit details.
+   - Each service has \`message.coPay.messages[]\` (copay text), \`message.coInsurance.messages[]\` (coinsurance text), and \`message.deductible.messages[]\`.
+   - The \`status\` field ("Active" or "Inactive") confirms if that service is covered.
+   - \`message.coPay.subMessages[].copay\` contains the exact copay dollar amount (e.g., "$30").
+
+4. **primaryCarePhysician** — PCP name and contact info (may be null).
+
+5. **providerNetwork** — Whether the requesting provider is in-network, and their tier.
+
+6. **additionalInfo** — HSA eligibility (\`hsa\`), funding type, Medicare info.
+
+## Rules
+
+1. **Extract real numbers.** Pull exact dollar amounts from \`planLevels\` and \`serviceLevels\`. For deductible remaining, find the planLevel where \`level\` contains "deductible" and read \`individual[0].remainingAmount\`. For OOP max, find \`level\` containing "outOfPocket". For copays, read from \`serviceLevels[].individual[].services[].message.coPay\`.
+2. **Determine coverage status first.** Check \`policyStatus\`. If "Past Policy" → terminated. If "Future Policy" → pending. If "Not Found" or member data is empty → not found. Only if "Active Policy" proceed to financial analysis.
+3. **Write for non-technical readers.** Explain terms like "coinsurance" (the percentage you pay after meeting your deductible) and "out-of-pocket maximum" (the most you'll pay in a year before insurance covers 100%).
+4. **Be specific in action items.** "Collect the $30 copay at check-in" is good. "Review the response" is not.
+5. **Flag financial risk.** HIGH risk: terminated, not found, or very high remaining deductible (>$2000). MEDIUM risk: pending coverage, or high coinsurance (>20%). NONE: active with low remaining costs.
+6. **Annotate 4-6 fields** that matter most for the visit. Always include policyStatus, deductible remaining, copay, and coinsurance. Add planType and OOP max if active.
+7. Respond with ONLY valid JSON matching the schema below. No markdown fences, no commentary.
+
+## Output schema
 {
-  "coverageStatusSummary": "One plain-English sentence about whether this patient is covered",
+  "coverageStatusSummary": "One sentence: is this patient covered, and under what plan?",
   "patientResponsibility": {
-    "deductibleRemaining": "Dollar amount remaining with context",
-    "copay": "Copay amount for this visit type",
-    "coinsurance": "Percentage the patient pays after deductible",
-    "outOfPocketMax": "How much remains before full coverage kicks in",
-    "plainEnglishSummary": "One sentence a staff member could read aloud to the patient"
+    "deductibleRemaining": "$X.XX remaining of $Y.YY annual deductible (or N/A with reason)",
+    "copay": "$X for [service type] (or N/A with reason)",
+    "coinsurance": "X% after deductible (or N/A with reason)",
+    "outOfPocketMax": "$X.XX remaining of $Y.YY annual maximum (or N/A with reason)",
+    "plainEnglishSummary": "One sentence: what will this patient likely owe for today's visit?"
   },
   "fieldAnnotations": [
     {
-      "fieldName": "exact.json.field.path",
-      "fieldValue": "the actual value",
-      "plainEnglishLabel": "Human-readable name",
-      "explanation": "What this means and why it matters",
+      "fieldName": "dot.path.to.field",
+      "fieldValue": "actual value from the response",
+      "plainEnglishLabel": "Human-readable label",
+      "explanation": "What this means and why it matters for today's visit",
       "importance": "HIGH|MEDIUM|LOW"
     }
   ],
   "actionItems": [
     {
       "priority": 1,
-      "action": "Specific thing to do",
+      "action": "Specific action the front desk should take right now",
       "reason": "Why this matters"
     }
   ],
   "riskFlag": {
     "hasRisk": true/false,
     "riskLevel": "HIGH|MEDIUM|NONE",
-    "riskSummary": "One sentence or null",
-    "specificReason": "Detailed reason or null"
+    "riskSummary": "One sentence (or null if NONE)",
+    "specificReason": "Detailed explanation (or null if NONE)"
   },
   "sandboxNote": "This annotation is based on Optum sandbox data and is for demonstration purposes only."
 }`
@@ -79,7 +97,7 @@ export async function annotateEligibility(input: ClaudeEligibilityInput): Promis
     },
     body: JSON.stringify({
       model: 'claude-sonnet-4-6',
-      max_tokens: 1200,
+      max_tokens: 2000,
       temperature: 0,
       system: SYSTEM_PROMPT,
       messages: [
@@ -89,15 +107,14 @@ export async function annotateEligibility(input: ClaudeEligibilityInput): Promis
 
 Patient Context:
 - Insurance Plan: ${input.patient.insurancePlan}
-- Background: ${input.patient.narrativeContext}
 - Requested Service: ${input.requestedServiceType}
 
-Raw 271 Eligibility Response:
+Raw Eligibility Response (GraphQL):
 ${JSON.stringify(input.eligibilityResponse, null, 2)}`,
         },
       ],
     }),
-    signal: AbortSignal.timeout(20000),
+    signal: AbortSignal.timeout(45000),
   })
 
   if (!response.ok) {
@@ -116,207 +133,195 @@ ${JSON.stringify(input.eligibilityResponse, null, 2)}`,
 }
 
 function getMockAnnotation(input: ClaudeEligibilityInput): ClaudeEligibilityAnnotation {
-  const mockAnnotations: Record<EligibilityScenario, ClaudeEligibilityAnnotation> = {
-    ELIGIBLE_ACTIVE: {
-      coverageStatusSummary: `${input.patient.firstName} ${input.patient.lastName} has active coverage under ${input.patient.insurancePlan}. Her plan is in good standing with no restrictions on the requested service.`,
-      patientResponsibility: {
-        deductibleRemaining: '$850 remaining of her $1,500 annual deductible (about 57% still to go)',
-        copay: '$30 copay for this primary care visit, collected at check-in',
-        coinsurance: '20% coinsurance (the portion she pays) applies to services after meeting her deductible',
-        outOfPocketMax: '$5,150 remaining of her $6,500 annual out-of-pocket maximum',
-        plainEnglishSummary: `${input.patient.firstName}, your insurance is active. For today's visit, you'll owe a $30 copay at check-in. Any lab work or additional services will apply to your remaining $850 deductible.`,
-      },
-      fieldAnnotations: [
-        { fieldName: 'planStatus[0].status', fieldValue: 'Active Coverage', plainEnglishLabel: 'Coverage Status', explanation: 'This confirms the patient has current, active insurance coverage with no issues.', importance: 'HIGH' },
-        { fieldName: 'planInformation.insuranceType', fieldValue: 'Preferred Provider Organization', plainEnglishLabel: 'Plan Type', explanation: 'PPO plan means the patient can see out-of-network providers but pays less when staying in-network.', importance: 'MEDIUM' },
-        { fieldName: 'benefitInformation[0].benefitAmount', fieldValue: '1500.00', plainEnglishLabel: 'Annual Deductible', explanation: 'The patient must pay $1,500 out of pocket each year before insurance starts sharing costs (except for preventive care).', importance: 'HIGH' },
-        { fieldName: 'benefitInformation[1].benefitAmount', fieldValue: '850.00', plainEnglishLabel: 'Deductible Remaining', explanation: 'The patient still needs to pay $850 more before the deductible is satisfied. She has used $650 so far this year.', importance: 'HIGH' },
-        { fieldName: 'benefitInformation[2].benefitAmount', fieldValue: '30.00', plainEnglishLabel: 'PCP Copay', explanation: 'A flat $30 fee for primary care visits, due at check-in regardless of deductible status.', importance: 'HIGH' },
-        { fieldName: 'benefitInformation[3].benefitPercent', fieldValue: '20', plainEnglishLabel: 'Coinsurance Rate', explanation: 'After the deductible is met, the patient pays 20% of covered services and insurance pays 80%.', importance: 'MEDIUM' },
-        { fieldName: 'benefitInformation[4].benefitAmount', fieldValue: '6500.00', plainEnglishLabel: 'Out-of-Pocket Maximum', explanation: 'The most the patient will pay in a year. After reaching $6,500, insurance covers 100%.', importance: 'MEDIUM' },
-        { fieldName: 'benefitInformation[6].benefitPercent', fieldValue: '0', plainEnglishLabel: 'Preventive Care', explanation: 'Annual physicals and recommended screenings are covered at 100% with no copay or deductible.', importance: 'HIGH' },
-        { fieldName: 'planDateInformation[2].date', fieldValue: '2018-06-15', plainEnglishLabel: 'Coverage Start Date', explanation: 'Patient has been continuously enrolled since June 2018, over 6 years of uninterrupted coverage.', importance: 'LOW' },
-        { fieldName: 'benefitInformation[7].benefitAmount', fieldValue: '50.00', plainEnglishLabel: 'Specialist Copay', explanation: 'If referred to a specialist, the copay increases to $50 per visit.', importance: 'MEDIUM' },
-      ],
-      actionItems: [
-        { priority: 1, action: 'Collect $30 copay from Maria at check-in', reason: 'PCP copay is due at time of service regardless of deductible status.' },
-        { priority: 2, action: 'Confirm any ordered lab work is performed at an in-network facility', reason: 'Out-of-network labs would cost significantly more and may not apply to her in-network deductible.' },
-        { priority: 3, action: 'If additional services are recommended, provide Maria with a cost estimate before proceeding', reason: 'With $850 remaining on her deductible, unexpected costs could be a concern.' },
-      ],
-      riskFlag: {
-        hasRisk: false,
-        riskLevel: 'NONE',
-        riskSummary: null,
-        specificReason: null,
-      },
-      sandboxNote: 'This annotation is based on Optum sandbox data and is for demonstration purposes only.',
-    },
+  const { firstName, lastName, insurancePlan, scenario } = input.patient
 
-    ELIGIBLE_DEDUCTIBLE_MET: {
-      coverageStatusSummary: `${input.patient.firstName} ${input.patient.lastName} has active coverage under ${input.patient.insurancePlan}. His annual deductible has been fully met, so most services are now covered at the plan's coinsurance rate.`,
-      patientResponsibility: {
-        deductibleRemaining: '$0 remaining. James has fully met his $2,000 annual deductible.',
-        copay: '$20 copay for this primary care visit. Physical therapy visits are $35 each.',
-        coinsurance: '10% coinsurance applies to covered services (insurance pays 90%)',
-        outOfPocketMax: '$1,200 remaining of his $4,000 out-of-pocket maximum. He has spent $2,800 this year.',
-        plainEnglishSummary: `${input.patient.firstName}, great news. Your deductible is fully met for the year. For today's follow-up, you'll owe a $20 copay. Physical therapy visits will be $35 each, and insurance covers 90% of any other services.`,
-      },
-      fieldAnnotations: [
-        { fieldName: 'planStatus[0].status', fieldValue: 'Active Coverage', plainEnglishLabel: 'Coverage Status', explanation: 'Active coverage with deductible fully satisfied for this plan year.', importance: 'HIGH' },
-        { fieldName: 'benefitInformation[1].benefitAmount', fieldValue: '0.00', plainEnglishLabel: 'Deductible Remaining', explanation: 'The deductible has been completely met. The patient is past the initial cost-sharing phase.', importance: 'HIGH' },
-        { fieldName: 'benefitInformation[2].benefitAmount', fieldValue: '20.00', plainEnglishLabel: 'PCP Copay', explanation: 'A flat $20 fee for primary care visits, collected at check-in.', importance: 'HIGH' },
-        { fieldName: 'benefitInformation[3].benefitPercent', fieldValue: '10', plainEnglishLabel: 'Coinsurance', explanation: 'James only pays 10% of covered services. This is a very favorable coinsurance rate.', importance: 'MEDIUM' },
-        { fieldName: 'benefitInformation[5].benefitAmount', fieldValue: '1200.00', plainEnglishLabel: 'OOP Remaining', explanation: 'Only $1,200 left before insurance covers 100% of all remaining costs for the year.', importance: 'MEDIUM' },
-        { fieldName: 'benefitInformation[8].benefitAmount', fieldValue: '35.00', plainEnglishLabel: 'PT Visit Copay', explanation: 'Physical therapy visits are $35 each with a 30-visit annual limit.', importance: 'HIGH' },
-        { fieldName: 'benefitInformation[8].quantity', fieldValue: '30', plainEnglishLabel: 'PT Visit Limit', explanation: 'Plan allows up to 30 physical therapy visits per calendar year.', importance: 'MEDIUM' },
-        { fieldName: 'planInformation.insuranceType', fieldValue: 'Health Maintenance Organization', plainEnglishLabel: 'Plan Type', explanation: 'HMO plan requires referrals for specialist visits and out-of-network care is not covered except emergencies.', importance: 'MEDIUM' },
-      ],
-      actionItems: [
-        { priority: 1, action: 'Collect $20 copay from James at check-in for the follow-up visit', reason: 'Standard PCP copay applies even though deductible is met.' },
-        { priority: 2, action: 'Verify James has a referral on file if physical therapy is being ordered', reason: 'HMO plans require PCP referral for PT services. Without it, the claim could be denied.' },
-        { priority: 3, action: 'Confirm how many PT visits James has already used this year against the 30-visit limit', reason: 'If he needs extensive PT for knee rehabilitation, visit limits could become a factor.' },
-      ],
-      riskFlag: {
-        hasRisk: false,
-        riskLevel: 'NONE',
-        riskSummary: null,
-        specificReason: null,
-      },
-      sandboxNote: 'This annotation is based on Optum sandbox data and is for demonstration purposes only.',
-    },
-
-    ELIGIBLE_HIGH_COPAY: {
-      coverageStatusSummary: `${input.patient.firstName} ${input.patient.lastName} has active coverage under ${input.patient.insurancePlan}, a high-deductible health plan. She has significant out-of-pocket exposure with $2,800 remaining on a $3,000 deductible.`,
-      patientResponsibility: {
-        deductibleRemaining: '$2,800 remaining of her $3,000 annual deductible. Only $200 has been applied so far.',
-        copay: 'No fixed copay. All services (except preventive care) apply to the deductible until it is met.',
-        coinsurance: '30% coinsurance after the deductible is met. Aisha pays 30 cents of every dollar.',
-        outOfPocketMax: '$7,300 remaining of her $7,500 out-of-pocket maximum.',
-        plainEnglishSummary: `${input.patient.firstName}, your insurance is active but you have a high-deductible plan. Most services today will be your responsibility until you've paid $2,800 more toward your deductible. Preventive care is covered at 100% with no deductible.`,
-      },
-      fieldAnnotations: [
-        { fieldName: 'planStatus[0].status', fieldValue: 'Active Coverage', plainEnglishLabel: 'Coverage Status', explanation: 'Coverage is active but this is a high-deductible plan with significant patient cost exposure.', importance: 'HIGH' },
-        { fieldName: 'planInformation.insuranceType', fieldValue: 'High Deductible Health Plan', plainEnglishLabel: 'Plan Type', explanation: 'HDHP plans have lower premiums but higher deductibles. Most services are patient responsibility until the deductible is met.', importance: 'HIGH' },
-        { fieldName: 'benefitInformation[0].benefitAmount', fieldValue: '3000.00', plainEnglishLabel: 'Annual Deductible', explanation: 'One of the highest standard deductibles. The patient pays the full cost of most services until reaching $3,000.', importance: 'HIGH' },
-        { fieldName: 'benefitInformation[1].benefitAmount', fieldValue: '2800.00', plainEnglishLabel: 'Deductible Remaining', explanation: 'Nearly the entire deductible remains. Only $200 has been applied. Lab work will likely be full patient cost.', importance: 'HIGH' },
-        { fieldName: 'benefitInformation[2].benefitPercent', fieldValue: '30', plainEnglishLabel: 'Coinsurance Rate', explanation: 'Even after the deductible is met, Aisha pays 30% of costs. This is higher than typical PPO plans.', importance: 'HIGH' },
-        { fieldName: 'benefitInformation[3].benefitAmount', fieldValue: '7500.00', plainEnglishLabel: 'Out-of-Pocket Maximum', explanation: 'The absolute maximum Aisha would pay in a year. At $7,500 this is the IRS maximum for individual HDHP coverage.', importance: 'MEDIUM' },
-        { fieldName: 'benefitInformation[5].benefitPercent', fieldValue: '0', plainEnglishLabel: 'Preventive Care', explanation: 'Critical: Preventive services are covered 100% with no deductible. If any of Aisha\'s labs qualify as preventive, they would be free.', importance: 'HIGH' },
-        { fieldName: 'benefitInformation[7].additionalInformation[0]', fieldValue: 'SUBJECT TO DEDUCTIBLE THEN 30% COINSURANCE', plainEnglishLabel: 'Lab Cost Structure', explanation: 'Lab work will be Aisha\'s full responsibility until she meets her $3,000 deductible. Thyroid panels typically cost $50-$200.', importance: 'HIGH' },
-        { fieldName: 'benefitInformation[11].benefitAmount', fieldValue: '600.00', plainEnglishLabel: 'HSA Employer Contribution', explanation: 'Aisha\'s plan includes a $600 annual employer contribution to her Health Savings Account. She can use HSA funds to pay for services.', importance: 'MEDIUM' },
-        { fieldName: 'planDateInformation[2].date', fieldValue: '2023-11-01', plainEnglishLabel: 'Coverage Start Date', explanation: 'Aisha has been enrolled since November 2023, about 14 months of continuous coverage.', importance: 'LOW' },
-      ],
-      actionItems: [
-        { priority: 1, action: 'Discuss estimated costs with Aisha before ordering lab work', reason: 'With $2,800 remaining on her deductible, thyroid lab panels ($50-$200) will be her full responsibility. She expressed cost concerns.' },
-        { priority: 2, action: 'Check if any ordered tests qualify as preventive screening', reason: 'Preventive services are covered 100% with no deductible. If thyroid screening is part of a wellness exam, it may be fully covered.' },
-        { priority: 3, action: 'Ask if Aisha has HSA funds available to cover today\'s costs', reason: 'Her plan includes an employer HSA contribution. HSA funds can be used for deductible expenses tax-free.' },
-      ],
-      riskFlag: {
-        hasRisk: true,
-        riskLevel: 'MEDIUM',
-        riskSummary: 'High out-of-pocket exposure. Patient may defer needed care due to cost.',
-        specificReason: 'Aisha has a $3,000 deductible with only $200 applied. Lab work for her thyroid condition will likely be full patient responsibility ($50-$200). She has expressed concern about costs. Consider discussing payment plans or checking if any services qualify as preventive.',
-      },
-      sandboxNote: 'This annotation is based on Optum sandbox data and is for demonstration purposes only.',
-    },
-
-    INELIGIBLE_TERMED: {
-      coverageStatusSummary: `${input.patient.firstName} ${input.patient.lastName}'s coverage under ${input.patient.insurancePlan} has been terminated. His COBRA election period expired and there are no active benefits on this plan.`,
-      patientResponsibility: {
-        deductibleRemaining: 'N/A. Coverage has been terminated. There is no active deductible.',
-        copay: 'N/A. No copay structure exists because there is no active coverage.',
-        coinsurance: 'N/A. Without active coverage, all costs are 100% patient responsibility.',
-        outOfPocketMax: 'N/A. No out-of-pocket maximum applies to a terminated plan.',
-        plainEnglishSummary: `${input.patient.firstName}, I need to let you know that your insurance coverage is no longer active. It ended on October 15, 2024 when your COBRA period expired. Any services today would be your full responsibility. Let's look at your options.`,
-      },
-      fieldAnnotations: [
-        { fieldName: 'planStatus[0].status', fieldValue: 'Inactive', plainEnglishLabel: 'Coverage Status', explanation: 'This is the most critical field. INACTIVE means the patient has no current insurance coverage under this plan.', importance: 'HIGH' },
-        { fieldName: 'planStatus[0].planDetails', fieldValue: 'Coverage terminated. COBRA election period has expired.', plainEnglishLabel: 'Termination Reason', explanation: 'Coverage ended because the COBRA continuation period expired. COBRA allows temporary coverage after job loss but has strict deadlines.', importance: 'HIGH' },
-        { fieldName: 'planDateInformation[3].date', fieldValue: '2024-10-15', plainEnglishLabel: 'Coverage End Date', explanation: 'The last day Robert had active insurance coverage. Any services after this date are not covered.', importance: 'HIGH' },
-        { fieldName: 'planDateInformation[2].date', fieldValue: '2015-09-01', plainEnglishLabel: 'Original Coverage Start', explanation: 'Robert had nearly 9 years of continuous coverage before termination. This history may help with future enrollment.', importance: 'LOW' },
-        { fieldName: 'benefitInformation[0].code', fieldValue: 'I', plainEnglishLabel: 'Non-Covered Status', explanation: 'Benefit code I means no benefits are available. All services are patient responsibility.', importance: 'HIGH' },
-        { fieldName: 'benefitInformation[1].additionalInformation[0]', fieldValue: 'VOLUNTARY WITHDRAWAL - COBRA EXPIRATION', plainEnglishLabel: 'Termination Type', explanation: 'Classified as voluntary withdrawal because the COBRA election window passed without enrollment.', importance: 'MEDIUM' },
-        { fieldName: 'planInformation.planName', fieldValue: 'UHC Choice Plus PPO 2024', plainEnglishLabel: 'Former Plan', explanation: 'The plan Robert was previously enrolled in. This information may be useful if he needs to provide coverage history.', importance: 'LOW' },
-        { fieldName: 'subscriber.memberId', fieldValue: '990155778', plainEnglishLabel: 'Former Member ID', explanation: 'This member ID is no longer active. Robert will need a new member ID if he enrolls in a new plan.', importance: 'MEDIUM' },
-      ],
-      actionItems: [
-        { priority: 1, action: 'Inform Robert that his insurance coverage is no longer active as of October 15, 2024', reason: 'The patient may not realize his coverage has terminated. This must be communicated clearly and compassionately before any services are provided.' },
-        { priority: 2, action: 'Provide Robert with information about Healthcare.gov marketplace enrollment and any current special enrollment periods', reason: 'Job loss qualifies as a life event for special enrollment. He may still be within the 60-day window to enroll in a marketplace plan.' },
-        { priority: 3, action: 'Discuss self-pay rates and payment plan options for the prescription refill he needs today', reason: 'Robert needs blood pressure medication. This is medically important and the front desk should help him access care even without insurance.' },
-      ],
-      riskFlag: {
-        hasRisk: true,
-        riskLevel: 'HIGH',
-        riskSummary: 'Coverage terminated. All services will be full patient responsibility.',
-        specificReason: 'Robert\'s coverage terminated on October 15, 2024 when his COBRA election period expired after a layoff. He is presenting an old insurance card and may not realize he has no active coverage. Any services provided today will not be covered by insurance. The patient needs blood pressure medication and should be connected with coverage options immediately.',
-      },
-      sandboxNote: 'This annotation is based on Optum sandbox data and is for demonstration purposes only.',
-    },
-
-    INELIGIBLE_NOT_FOUND: {
-      coverageStatusSummary: `No matching insurance record was found for ${input.patient.firstName} ${input.patient.lastName} using the provided member ID. The payer system cannot verify coverage.`,
-      patientResponsibility: {
-        deductibleRemaining: 'Unable to determine. Member ID not found in the payer system.',
-        copay: 'Unable to determine. Coverage cannot be verified.',
-        coinsurance: 'Unable to determine. No active plan information available.',
-        outOfPocketMax: 'Unable to determine. No benefit information available.',
-        plainEnglishSummary: `${input.patient.firstName}, the member ID on your card isn't matching any active records with UnitedHealthcare. This sometimes happens when you switch plans. Let me help you figure out your current member ID.`,
-      },
-      fieldAnnotations: [
-        { fieldName: 'planStatus[0].status', fieldValue: 'Not Found', plainEnglishLabel: 'Lookup Result', explanation: 'The payer could not find any subscriber matching this member ID. This does not necessarily mean the patient is uninsured.', importance: 'HIGH' },
-        { fieldName: 'planStatus[0].planDetails', fieldValue: 'No matching subscriber record found for the provided member ID.', plainEnglishLabel: 'Error Details', explanation: 'The member ID submitted does not match any records. Common causes: old card, typo in member ID, or plan changed to a different carrier.', importance: 'HIGH' },
-        { fieldName: 'subscriber.memberId', fieldValue: '990166889', plainEnglishLabel: 'Submitted Member ID', explanation: 'This is the member ID that was searched. It may be from an old insurance card that is no longer valid.', importance: 'HIGH' },
-        { fieldName: 'subscriber.firstName', fieldValue: '', plainEnglishLabel: 'Subscriber Name', explanation: 'No subscriber information was returned, confirming the member ID did not match any records.', importance: 'MEDIUM' },
-        { fieldName: 'benefitInformation[0].code', fieldValue: 'U', plainEnglishLabel: 'Contact Payer', explanation: 'Code U means the system recommends contacting the payer directly to resolve the member lookup issue.', importance: 'HIGH' },
-        { fieldName: 'planInformation.planName', fieldValue: '', plainEnglishLabel: 'Plan Information', explanation: 'No plan information available because no matching member was found.', importance: 'LOW' },
-      ],
-      actionItems: [
-        { priority: 1, action: 'Ask Destiny if she has a new insurance card or any enrollment documents from her university plan', reason: 'She recently switched from her parents\' plan to a university plan. The old member ID is no longer valid.' },
-        { priority: 2, action: 'Call UnitedHealthcare member services at the number on the back of her card to look up the correct member ID', reason: 'The payer can search by name, date of birth, and SSN to locate the correct member record.' },
-        { priority: 3, action: 'Check if the university health center has Destiny\'s current insurance information on file', reason: 'University-sponsored plans often have enrollment records accessible through the student health office.' },
-      ],
-      riskFlag: {
-        hasRisk: true,
-        riskLevel: 'HIGH',
-        riskSummary: 'Member ID not found. Coverage cannot be verified with the information provided.',
-        specificReason: 'The member ID 990166889 does not match any active records in the UnitedHealthcare system. Destiny recently switched from her parents\' plan to a university-sponsored plan and is likely presenting her old insurance card. Services should not be billed to this member ID. The correct member ID must be obtained before claims can be processed.',
-      },
-      sandboxNote: 'This annotation is based on Optum sandbox data and is for demonstration purposes only.',
-    },
-
-    ELIGIBLE_PENDING: {
-      coverageStatusSummary: `${input.patient.firstName} ${input.patient.lastName}'s enrollment in ${input.patient.insurancePlan} has been confirmed, but coverage is not yet effective. Benefits are listed but will not be active until the plan effective date of January 1, 2025.`,
-      patientResponsibility: {
-        deductibleRemaining: '$250 Part B deductible (not yet effective). This is the full amount since the plan has not started.',
-        copay: '$0 for primary care visits once coverage is active. Currently not in effect.',
-        coinsurance: '20% coinsurance after deductible once coverage begins.',
-        outOfPocketMax: '$3,900 annual out-of-pocket maximum once coverage is effective.',
-        plainEnglishSummary: `${input.patient.firstName}, your enrollment in the Medicare Advantage plan is confirmed, but it doesn't take effect until January 1, 2025. If you need care before then, we'll need to use your current coverage or discuss other options.`,
-      },
-      fieldAnnotations: [
-        { fieldName: 'planStatus[0].status', fieldValue: 'Active Coverage', plainEnglishLabel: 'Enrollment Status', explanation: 'The enrollment is confirmed and marked active, but the plan effective date has not arrived yet. Benefits are not yet usable.', importance: 'HIGH' },
-        { fieldName: 'planStatus[0].planDetails', fieldValue: 'Enrollment confirmed. Coverage effective date is pending.', plainEnglishLabel: 'Pending Notice', explanation: 'This is a future-dated enrollment. The plan exists but cannot be used for claims until the effective date.', importance: 'HIGH' },
-        { fieldName: 'planDateInformation[2].date', fieldValue: '2025-01-01', plainEnglishLabel: 'Effective Date', explanation: 'The earliest date services can be covered. Any services before January 1, 2025 will not be covered under this plan.', importance: 'HIGH' },
-        { fieldName: 'planInformation.insuranceType', fieldValue: 'Medicare Advantage', plainEnglishLabel: 'Plan Type', explanation: 'Medicare Advantage (Part C) replaces Original Medicare. Once active, this plan provides Part A, Part B, and often Part D benefits.', importance: 'MEDIUM' },
-        { fieldName: 'benefitInformation[0].benefitAmount', fieldValue: '250.00', plainEnglishLabel: 'Part B Deductible', explanation: 'Low deductible typical of Medicare Advantage plans. Once active, only $250 must be paid before coinsurance kicks in.', importance: 'MEDIUM' },
-        { fieldName: 'benefitInformation[1].benefitAmount', fieldValue: '0.00', plainEnglishLabel: 'PCP Copay (Pending)', explanation: '$0 copay for primary care visits is excellent. This benefit is not yet active.', importance: 'MEDIUM' },
-        { fieldName: 'benefitInformation[4].benefitPercent', fieldValue: '0', plainEnglishLabel: 'Wellness Visit', explanation: 'Annual wellness visits will be covered at 100% once the plan is active. Good for scheduling Thomas\'s requested visit.', importance: 'MEDIUM' },
-        { fieldName: 'benefitInformation[3].benefitAmount', fieldValue: '3900.00', plainEnglishLabel: 'OOP Maximum', explanation: 'A $3,900 out-of-pocket maximum is very protective. Once active, this caps Thomas\'s annual medical expenses.', importance: 'LOW' },
-      ],
-      actionItems: [
-        { priority: 1, action: 'Confirm with Thomas that his coverage effective date is January 1, 2025 and schedule his wellness visit for on or after that date', reason: 'Any services before the effective date will not be covered. His requested wellness visit should be scheduled after January 1.' },
-        { priority: 2, action: 'Check if Thomas has current Medicare coverage (Original Medicare) that is active until the new plan starts', reason: 'There should be no gap in coverage. Original Medicare should still be active until the Advantage plan takes effect.' },
-        { priority: 3, action: 'Provide Thomas with his new plan details and member services phone number for the Medicare Advantage plan', reason: 'Having plan information on hand will help Thomas understand his new benefits and contact the plan if needed.' },
-      ],
-      riskFlag: {
-        hasRisk: true,
-        riskLevel: 'MEDIUM',
-        riskSummary: 'Coverage confirmed but not yet effective. Services before the effective date will not be covered under this plan.',
-        specificReason: 'Thomas\'s Medicare Advantage enrollment is confirmed for an effective date of January 1, 2025. If services are needed before that date, they must be billed to his current Medicare coverage (if any) or will be patient responsibility. The wellness visit he is requesting should be scheduled for after the effective date.',
-      },
-      sandboxNote: 'This annotation is based on Optum sandbox data and is for demonstration purposes only.',
-    },
+  const base = {
+    sandboxNote: 'This annotation is based on Optum sandbox data and is for demonstration purposes only.',
   }
 
-  return mockAnnotations[input.patient.scenario]
+  if (scenario === 'INELIGIBLE_TERMED') {
+    return {
+      ...base,
+      coverageStatusSummary: `${firstName} ${lastName}'s coverage under ${insurancePlan} is no longer active. The policy status shows "Past Policy," meaning this plan has been terminated.`,
+      patientResponsibility: {
+        deductibleRemaining: 'N/A — coverage is terminated.',
+        copay: 'N/A — no active coverage. All services are full patient responsibility.',
+        coinsurance: 'N/A — no active plan to apply coinsurance against.',
+        outOfPocketMax: 'N/A — no active plan.',
+        plainEnglishSummary: `${firstName} has no active insurance under this plan. Any services today would be billed entirely to the patient.`,
+      },
+      fieldAnnotations: [
+        { fieldName: 'eligibilityInfo.insuranceInfo.policyStatus', fieldValue: 'Past Policy', plainEnglishLabel: 'Coverage Status', explanation: '"Past Policy" means this insurance plan has ended. The patient had coverage previously but it is no longer active.', importance: 'HIGH' },
+        { fieldName: 'eligibilityInfo.insuranceInfo.eligibilityEndDate', fieldValue: '2024-10-15', plainEnglishLabel: 'Coverage End Date', explanation: 'Coverage ended on this date. Any services after this date are not covered under this plan.', importance: 'HIGH' },
+        { fieldName: 'serviceLevels[0].individual[0].services[0].status', fieldValue: 'Inactive', plainEnglishLabel: 'Service Status', explanation: 'Benefits under this plan are inactive — no claims can be processed.', importance: 'HIGH' },
+        { fieldName: 'eligibilityInfo.insuranceInfo.insuranceType', fieldValue: 'Preferred Provider Organization (PPO)', plainEnglishLabel: 'Former Plan Type', explanation: 'This was a PPO plan. The plan type no longer matters since coverage is terminated.', importance: 'LOW' },
+      ],
+      actionItems: [
+        { priority: 1, action: `Inform ${firstName} that their ${insurancePlan} coverage terminated on 10/15/2024 before providing any services.`, reason: 'Services rendered without active coverage will not be reimbursed. The patient must understand they are financially responsible.' },
+        { priority: 2, action: `Ask ${firstName} if they have obtained new insurance coverage since the termination date.`, reason: 'The patient may have enrolled in a new plan through a new employer, marketplace, or COBRA that we can verify instead.' },
+        { priority: 3, action: 'If no other coverage exists, discuss self-pay rates and payment plan options.', reason: 'The patient may still need care. Providing cost transparency upfront prevents billing surprises.' },
+      ],
+      riskFlag: {
+        hasRisk: true,
+        riskLevel: 'HIGH',
+        riskSummary: 'Coverage terminated — all services will be full patient responsibility.',
+        specificReason: `${firstName} ${lastName}'s plan shows "Past Policy" with an eligibility end date that has passed. No benefits are available. Do not bill this plan for any services.`,
+      },
+    }
+  }
+
+  if (scenario === 'INELIGIBLE_NOT_FOUND') {
+    return {
+      ...base,
+      coverageStatusSummary: `No active insurance record was found for ${firstName} ${lastName}. The system returned an empty member record, meaning the member ID could not be matched to any policy.`,
+      patientResponsibility: {
+        deductibleRemaining: 'Unable to determine — no member record found.',
+        copay: 'Unable to determine — coverage cannot be verified.',
+        coinsurance: 'Unable to determine — no plan information available.',
+        outOfPocketMax: 'Unable to determine — no plan information available.',
+        plainEnglishSummary: `We could not verify any insurance coverage for ${firstName}. This does not necessarily mean they are uninsured — the member ID may be incorrect.`,
+      },
+      fieldAnnotations: [
+        { fieldName: 'eligibilityInfo.insuranceInfo.policyStatus', fieldValue: 'Not Found', plainEnglishLabel: 'Lookup Result', explanation: 'The payer system could not find any subscriber matching the member ID provided. This could mean the ID is wrong, expired, or belongs to a different payer.', importance: 'HIGH' },
+        { fieldName: 'eligibilityInfo.member.firstName', fieldValue: '', plainEnglishLabel: 'Returned Member Name', explanation: 'The response came back with empty member details, confirming no match was found in the payer system.', importance: 'HIGH' },
+        { fieldName: 'eligibilityInfo.planLevels', fieldValue: '[]', plainEnglishLabel: 'Plan Benefits', explanation: 'No plan-level financial information was returned because no matching policy exists.', importance: 'MEDIUM' },
+      ],
+      actionItems: [
+        { priority: 1, action: `Ask ${firstName} for a current insurance card or recent enrollment letter and verify the member ID.`, reason: 'The most common cause of "not found" is a typo in the member ID or using an old card from a previous plan year.' },
+        { priority: 2, action: 'Try searching by name and date of birth by calling UnitedHealthcare provider services at 1-877-842-3210.', reason: 'Payers can often locate a member record using demographic information when the electronic lookup fails.' },
+        { priority: 3, action: 'If the patient confirms they have UHC coverage, ask for the group number to narrow the search.', reason: 'The group number combined with date of birth is often enough to locate the correct policy.' },
+      ],
+      riskFlag: {
+        hasRisk: true,
+        riskLevel: 'HIGH',
+        riskSummary: 'Member not found — coverage cannot be verified with the information provided.',
+        specificReason: 'The member ID did not match any active or historical policy in the UnitedHealthcare system. Obtain updated insurance information before scheduling or providing services.',
+      },
+    }
+  }
+
+  if (scenario === 'ELIGIBLE_PENDING') {
+    return {
+      ...base,
+      coverageStatusSummary: `${firstName} ${lastName} is enrolled in ${insurancePlan}, but coverage has a future effective date. The policy status shows "Future Policy," meaning benefits are not yet usable.`,
+      patientResponsibility: {
+        deductibleRemaining: '$250.00 remaining of $250.00 annual deductible — but not yet applicable until coverage starts.',
+        copay: '$0 for PCP visits once coverage is effective (pending).',
+        coinsurance: '20% after deductible once coverage is effective (pending).',
+        outOfPocketMax: '$3,900.00 remaining of $3,900.00 annual maximum — not yet applicable.',
+        plainEnglishSummary: `${firstName}'s enrollment is confirmed but coverage hasn't started yet. Services today would not be covered under this plan.`,
+      },
+      fieldAnnotations: [
+        { fieldName: 'eligibilityInfo.insuranceInfo.policyStatus', fieldValue: 'Future Policy', plainEnglishLabel: 'Policy Status', explanation: '"Future Policy" means enrollment is confirmed but the plan effective date is in the future. Benefits cannot be used until that date arrives.', importance: 'HIGH' },
+        { fieldName: 'eligibilityInfo.insuranceInfo.eligibilityStartDate', fieldValue: '2025-01-01', plainEnglishLabel: 'Coverage Effective Date', explanation: 'This is when the plan becomes active and claims can be submitted. Services before this date will be denied.', importance: 'HIGH' },
+        { fieldName: 'eligibilityInfo.planLevels[0].individual[0].remainingAmount', fieldValue: '250.00', plainEnglishLabel: 'Deductible Remaining (Future)', explanation: 'The full deductible amount is remaining because the plan year has not started. This amount applies once coverage begins.', importance: 'MEDIUM' },
+        { fieldName: 'eligibilityInfo.insuranceInfo.insuranceType', fieldValue: 'Medicare Advantage', plainEnglishLabel: 'Plan Type', explanation: 'This is a Medicare Advantage plan, which replaces Original Medicare with a private plan that typically includes additional benefits.', importance: 'MEDIUM' },
+      ],
+      actionItems: [
+        { priority: 1, action: `Confirm with ${firstName} that their coverage effective date is 01/01/2025. Do not bill this plan for services before that date.`, reason: 'Claims submitted before the effective date will be denied by the payer.' },
+        { priority: 2, action: `Ask ${firstName} if they have current coverage under a different plan (e.g., existing Medicare, employer plan, or marketplace plan).`, reason: 'There may be no gap in coverage if a prior plan is still active. That plan should be billed for today\'s services.' },
+        { priority: 3, action: 'If the visit can wait, suggest rescheduling after the coverage effective date.', reason: 'The patient will have full benefits including $0 PCP copay once the plan is active.' },
+      ],
+      riskFlag: {
+        hasRisk: true,
+        riskLevel: 'MEDIUM',
+        riskSummary: 'Enrollment confirmed but coverage is not yet effective — services today are not covered.',
+        specificReason: `${firstName}'s ${insurancePlan} plan has a future effective date. The plan is real and enrolled, but cannot be billed until the start date. Check for transitional coverage.`,
+      },
+    }
+  }
+
+  if (scenario === 'ELIGIBLE_DEDUCTIBLE_MET') {
+    return {
+      ...base,
+      coverageStatusSummary: `${firstName} ${lastName} has active coverage under ${insurancePlan}. The individual deductible has been fully met — only copays and coinsurance apply for most services.`,
+      patientResponsibility: {
+        deductibleRemaining: '$0.00 remaining of $2,000.00 annual deductible — fully satisfied.',
+        copay: '$20 for a PCP office visit.',
+        coinsurance: '10% after deductible (which is already met).',
+        outOfPocketMax: '$1,200.00 remaining of $4,000.00 annual out-of-pocket maximum.',
+        plainEnglishSummary: `${firstName}'s deductible is met for the year. For today's visit, expect a $20 copay at check-in. Any additional services will be covered at 90% by insurance.`,
+      },
+      fieldAnnotations: [
+        { fieldName: 'eligibilityInfo.insuranceInfo.policyStatus', fieldValue: 'Active Policy', plainEnglishLabel: 'Coverage Status', explanation: 'Coverage is active and in good standing. Claims can be submitted normally.', importance: 'HIGH' },
+        { fieldName: 'eligibilityInfo.planLevels[0].individual[0].remainingAmount', fieldValue: '0.00', plainEnglishLabel: 'Deductible Remaining', explanation: 'The deductible (the amount you pay before insurance starts sharing costs) is fully met. This is great news — the patient has already satisfied their annual deductible.', importance: 'HIGH' },
+        { fieldName: 'eligibilityInfo.planLevels[1].individual[0].remainingAmount', fieldValue: '1200.00', plainEnglishLabel: 'Out-of-Pocket Remaining', explanation: '$1,200 remains before hitting the annual maximum. Once the OOP max is reached, insurance covers 100% of in-network services.', importance: 'HIGH' },
+        { fieldName: 'serviceLevels[0].individual[0].services[0].message.coPay.messages[0]', fieldValue: '$20 / Visit PCP OFFICE VISIT COPAY', plainEnglishLabel: 'PCP Visit Copay', explanation: 'The fixed amount due at each primary care visit. This is collected at check-in regardless of deductible status.', importance: 'HIGH' },
+        { fieldName: 'eligibilityInfo.insuranceInfo.insuranceType', fieldValue: 'Health Maintenance Organization (HMO)', plainEnglishLabel: 'Plan Type', explanation: 'HMO plans require using in-network providers and typically require a PCP referral for specialists.', importance: 'MEDIUM' },
+      ],
+      actionItems: [
+        { priority: 1, action: `Collect the $20 copay from ${firstName} at check-in.`, reason: 'The PCP copay is a fixed amount due at the time of service, even though the deductible is met.' },
+        { priority: 2, action: 'If additional services are needed (labs, imaging), inform the patient they will owe 10% coinsurance.', reason: 'With the deductible met, insurance covers 90% but the patient still has $1,200 remaining toward their OOP max.' },
+      ],
+      riskFlag: {
+        hasRisk: false,
+        riskLevel: 'NONE',
+        riskSummary: null,
+        specificReason: null,
+      },
+    }
+  }
+
+  if (scenario === 'ELIGIBLE_HIGH_COPAY') {
+    return {
+      ...base,
+      coverageStatusSummary: `${firstName} ${lastName} has active coverage under ${insurancePlan}, a High Deductible Health Plan (HDHP) with HSA eligibility. Most services are subject to the deductible before insurance pays.`,
+      patientResponsibility: {
+        deductibleRemaining: '$2,800.00 remaining of $3,000.00 annual deductible.',
+        copay: 'No fixed copay — most services apply to the deductible first. Preventive care is $0.',
+        coinsurance: '30% after deductible is met.',
+        outOfPocketMax: '$7,300.00 remaining of $7,500.00 annual out-of-pocket maximum.',
+        plainEnglishSummary: `${firstName} has a high-deductible plan with $2,800 remaining before insurance starts sharing costs. Today's visit will likely be billed at full cost toward the deductible, unless it's preventive care.`,
+      },
+      fieldAnnotations: [
+        { fieldName: 'eligibilityInfo.insuranceInfo.policyStatus', fieldValue: 'Active Policy', plainEnglishLabel: 'Coverage Status', explanation: 'Coverage is active. However, this is an HDHP — most services require the patient to pay full cost until the deductible is met.', importance: 'HIGH' },
+        { fieldName: 'eligibilityInfo.planLevels[0].individual[0].remainingAmount', fieldValue: '2800.00', plainEnglishLabel: 'Deductible Remaining', explanation: '$2,800 of the $3,000 deductible remains. Until this is met, the patient pays the full negotiated rate for most services. Only $200 has been applied so far this year.', importance: 'HIGH' },
+        { fieldName: 'eligibilityInfo.planLevels[1].individual[0].remainingAmount', fieldValue: '7300.00', plainEnglishLabel: 'Out-of-Pocket Remaining', explanation: 'The patient could pay up to $7,300 more this year before insurance covers 100%. This is a significant financial exposure.', importance: 'HIGH' },
+        { fieldName: 'additionalInfo.hsa', fieldValue: 'Y', plainEnglishLabel: 'HSA Eligible', explanation: 'This plan qualifies for a Health Savings Account (HSA). The patient may have HSA funds available to cover today\'s costs. Ask if they want to pay with their HSA card.', importance: 'MEDIUM' },
+        { fieldName: 'serviceLevels[0].individual[0].services[0].message.coPay.messages[0]', fieldValue: 'SUBJECT TO DEDUCTIBLE THEN 30% COINSURANCE', plainEnglishLabel: 'Cost-Sharing Structure', explanation: 'Most services follow a two-step cost model: first the patient pays 100% until the deductible is met, then they pay 30% (coinsurance) and insurance pays 70%.', importance: 'MEDIUM' },
+      ],
+      actionItems: [
+        { priority: 1, action: `Inform ${firstName} that today's visit will likely apply toward their $2,800 remaining deductible. Provide an estimate of expected charges.`, reason: 'HDHP patients often face higher-than-expected bills. Cost transparency upfront prevents billing complaints.' },
+        { priority: 2, action: `Ask ${firstName} if they have an HSA card they would like to use for payment.`, reason: 'The plan is HSA-eligible and the patient may have pre-tax funds available to cover their costs.' },
+        { priority: 3, action: 'If this is a preventive care visit (annual wellness, screening), confirm it is coded correctly to qualify for $0 cost-sharing.', reason: 'Preventive services are covered at 100% even on HDHPs, but only if coded as preventive — not diagnostic.' },
+      ],
+      riskFlag: {
+        hasRisk: true,
+        riskLevel: 'MEDIUM',
+        riskSummary: 'High-deductible plan with $2,800 remaining — patient faces significant out-of-pocket cost.',
+        specificReason: `${firstName} has an HDHP with most of the $3,000 deductible still unmet. Non-preventive services will be billed at full negotiated rates. Ensure the patient understands their cost exposure before proceeding.`,
+      },
+    }
+  }
+
+  // ELIGIBLE_ACTIVE (default)
+  return {
+    ...base,
+    coverageStatusSummary: `${firstName} ${lastName} has active coverage under ${insurancePlan}. The plan is a PPO in good standing with a partially met deductible.`,
+    patientResponsibility: {
+      deductibleRemaining: '$850.00 remaining of $1,500.00 annual deductible.',
+      copay: '$30 for a PCP office visit. $50 for a specialist visit.',
+      coinsurance: '20% after deductible for most services.',
+      outOfPocketMax: '$5,150.00 remaining of $6,500.00 annual out-of-pocket maximum.',
+      plainEnglishSummary: `${firstName}'s insurance is active with $850 left on the deductible. For today's PCP visit, collect the $30 copay at check-in. Additional services may apply to the remaining deductible.`,
+    },
+    fieldAnnotations: [
+      { fieldName: 'eligibilityInfo.insuranceInfo.policyStatus', fieldValue: 'Active Policy', plainEnglishLabel: 'Coverage Status', explanation: 'Coverage is active and in good standing. Claims can be submitted normally.', importance: 'HIGH' },
+      { fieldName: 'eligibilityInfo.planLevels[0].individual[0].remainingAmount', fieldValue: '850.00', plainEnglishLabel: 'Deductible Remaining', explanation: '$850 of the $1,500 annual deductible remains. The patient has used $650 toward their deductible so far this year. Services beyond the copay will apply to this remaining amount.', importance: 'HIGH' },
+      { fieldName: 'eligibilityInfo.planLevels[1].individual[0].remainingAmount', fieldValue: '5150.00', plainEnglishLabel: 'Out-of-Pocket Remaining', explanation: 'The patient has $5,150 remaining before reaching the $6,500 annual out-of-pocket maximum, at which point insurance covers 100%.', importance: 'HIGH' },
+      { fieldName: 'serviceLevels[0].individual[0].services[0].message.coPay.subMessages[0].copay', fieldValue: '$30', plainEnglishLabel: 'PCP Visit Copay', explanation: 'The fixed copay amount for a primary care office visit. This is due at check-in.', importance: 'HIGH' },
+      { fieldName: 'providerNetwork.status', fieldValue: 'In Network', plainEnglishLabel: 'Network Status', explanation: 'The requesting provider is in-network, which means lower cost-sharing for the patient.', importance: 'MEDIUM' },
+      { fieldName: 'eligibilityInfo.insuranceInfo.insuranceType', fieldValue: 'Preferred Provider Organization (PPO)', plainEnglishLabel: 'Plan Type', explanation: 'PPO plans allow the patient to see any provider without a referral, but in-network providers cost less.', importance: 'MEDIUM' },
+    ],
+    actionItems: [
+      { priority: 1, action: `Collect the $30 copay from ${firstName} at check-in.`, reason: 'The PCP office visit has a fixed $30 copay that is due at the time of service.' },
+      { priority: 2, action: 'If labs or imaging are ordered, inform the patient that costs will apply toward the $850 remaining deductible at 20% coinsurance.', reason: 'After the copay, additional services are subject to deductible and coinsurance. The patient should know before agreeing to additional services.' },
+    ],
+    riskFlag: {
+      hasRisk: false,
+      riskLevel: 'NONE',
+      riskSummary: null,
+      specificReason: null,
+    },
+  }
 }

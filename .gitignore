@@ -39,3 +39,15 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# local dev notes / scratch files
+.testing.md
+change-log.md
+graph-query.csv
+optum-real-eligibility-starter-plan.md
+
+# API spec docs (internal)
+*.xlsx
+
+# duplicate lock file
+package-lock.json

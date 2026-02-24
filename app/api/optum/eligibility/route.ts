@@ -7,7 +7,7 @@ import { annotateEligibility } from '@/lib/claude-annotator'
 
 export async function POST(request: NextRequest) {
   const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), 25000)
+  const timeout = setTimeout(() => controller.abort(), 55000)
 
   try {
     const { patient } = (await request.json()) as { patient: SyntheticPatient }
@@ -36,7 +36,6 @@ export async function POST(request: NextRequest) {
           firstName: patient.firstName,
           lastName: patient.lastName,
           insurancePlan: patient.insurancePlan,
-          narrativeContext: patient.narrativeContext,
           scenario: patient.scenario,
         },
         eligibilityResponse: rawResponse,
@@ -63,7 +62,7 @@ export async function POST(request: NextRequest) {
     })
   } catch (error) {
     if (controller.signal.aborted) {
-      return NextResponse.json({ error: 'Request timed out after 25 seconds' }, { status: 504 })
+      return NextResponse.json({ error: 'Request timed out after 55 seconds' }, { status: 504 })
     }
     return NextResponse.json(
       { error: error instanceof Error ? error.message : 'Internal server error' },

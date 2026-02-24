@@ -4,7 +4,6 @@ import { motion } from 'framer-motion'
 import type { SyntheticPatient } from '@/types/patient.types'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
-import { Separator } from '@/components/ui/separator'
 
 const scenarioBadgeColors: Record<string, string> = {
   ELIGIBLE_ACTIVE: 'bg-green-500/15 text-green-400 border-green-500/30',
@@ -56,10 +55,6 @@ export function PatientCard({ patient }: PatientCardProps) {
               <p className="font-medium">{patient.primaryCareProvider}</p>
             </div>
           </div>
-          <Separator />
-          <p className="text-sm text-muted-foreground leading-relaxed">
-            {patient.narrativeContext}
-          </p>
         </CardContent>
       </Card>
     </motion.div>
