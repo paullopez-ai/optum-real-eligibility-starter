@@ -6,7 +6,6 @@ export interface ClaudeEligibilityInput {
     firstName: string
     lastName: string
     insurancePlan: string
-    narrativeContext: string
     scenario: EligibilityScenario
   }
   eligibilityResponse: EligibilityResponse
