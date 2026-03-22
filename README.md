@@ -1,12 +1,12 @@
-# Optum Real Eligibility Starter
+# Optum API Eligibility Starter
 
-A working Next.js starter that demonstrates how to integrate the [Optum Real Pre-Service Eligibility API](https://developer.optum.com) with Claude AI to translate raw insurance eligibility responses into plain-English summaries for healthcare staff.
+A working Next.js starter that demonstrates how to integrate the [Optum Pre-Service Eligibility API](https://developer.optum.com) with Claude AI to translate raw insurance eligibility responses into plain-English summaries for healthcare staff.
 
 This project is a practical reference implementation. Clone it, add your API credentials, and you have a running eligibility verification interface that queries the Optum GraphQL eligibility API.
 
 ## What This Demonstrates
 
-- **Optum Real API integration** — OAuth 2.0 client credentials authentication, GraphQL eligibility query construction, and response parsing
+- **Optum API integration** — OAuth 2.0 client credentials authentication, GraphQL eligibility query construction, and response parsing
 - **Claude AI annotation** — Passing raw GraphQL eligibility response data to Claude and receiving structured plain-English output
 - **Six eligibility scenarios** — Active coverage, deductible met, high deductible/HSA, terminated coverage, member not found, and pending enrollment
 - **Production-ready patterns** — Token caching, graceful fallback when Claude is unavailable, typed state machine, server-side credential handling
@@ -136,7 +136,7 @@ The diagram above shows the full request flow from the browser through the appli
 ```
 Browser → POST /api/optum/eligibility
   → 1. Fetch OAuth token from OPTUM_AUTH_URL (cached with 60-second expiry buffer)
-  → 2. Send GraphQL query to Optum Real Eligibility API
+  → 2. Send GraphQL query to Optum Eligibility API
   → 3. Call Claude API with raw eligibility response
   → 4. Return { rawResponse, annotation, durationMs }
 Browser renders split panel: Claude output (left) + raw JSON (right)
@@ -232,4 +232,4 @@ MIT
 
 ---
 
-Built by [Paul Lopez](https://paullopez.ai) as a reference implementation for healthcare developers working with the Optum Real Pre-Service Eligibility API.
+Built by [Paul Lopez](https://paullopez.ai) as a reference implementation for healthcare developers working with the Optum Pre-Service Eligibility API.
