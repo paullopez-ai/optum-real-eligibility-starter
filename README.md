@@ -131,6 +131,8 @@ These patients use Optum's sandbox payer ID (`87726`) and are pre-configured wit
 
 The diagram above shows the full request flow from the browser through the application server to external services, including where mock data is used in development mode.
 
+![Optum API Eligibility Block Diagram](Optum-api-eligibility-block-diagram.jpg)
+
 **Request flow:**
 
 ```
