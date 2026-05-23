@@ -1,0 +1,92 @@
+%%{init: {'theme': 'dark', 'themeVariables': {'primaryColor': '#4f46e5', 'primaryTextColor': '#e2e8f0', 'lineColor': '#94a3b8', 'secondaryColor': '#1e293b', 'tertiaryColor': '#0f172a'}}}%%
+
+flowchart TB
+    subgraph Browser["Browser (Client)"]
+        Page["page.tsx<br/>useReducer State Machine"]
+        Selector["PatientSelector<br/>6 Synthetic Patients"]
+        ResultPanel["ResultPanel<br/>60/40 Split Layout"]
+        ClaudePanel["ClaudeAnnotationPanel<br/>Plain-English Summary"]
+        RawPanel["RawResponsePanel<br/>JSON + Field Tooltips"]
+        Loading["LoadingSequence<br/>Two-Step Animation"]
+        CoverageSummary["CoverageSummary"]
+        Responsibility["ResponsibilityBreakdown"]
+        ActionItems["ActionItems"]
+        RiskFlag["RiskFlag"]
+    end
+
+    subgraph Server["Next.js API Route"]
+        Route["POST /api/optum/eligibility<br/>route.ts<br/>55s abort timeout"]
+    end
+
+    subgraph Services["Service Layer (lib/)"]
+        Auth["optum-auth.ts<br/>OAuth 2.0 Token Manager<br/>60s expiry buffer cache"]
+        Eligibility["optum-eligibility.ts<br/>GraphQL Query Builder<br/>170-line eligibility query"]
+        Annotator["claude-annotator.ts<br/>AI Annotation Engine<br/>Structured JSON output"]
+        Patients["patients.ts<br/>6 SyntheticPatient objects"]
+    end
+
+    subgraph Types["Type System (types/)"]
+        OptumTypes["optum.types.ts<br/>EligibilityResponse<br/>GraphQL interfaces"]
+        ClaudeTypes["claude.types.ts<br/>ClaudeEligibilityAnnotation<br/>Input/Output contracts"]
+        PatientTypes["patient.types.ts<br/>SyntheticPatient<br/>AppState union type"]
+    end
+
+    subgraph External["External APIs"]
+        OptumAuth["Optum OAuth<br/>idx.linkhealth.com<br/>Client Credentials Flow"]
+        OptumAPI["Optum Eligibility API<br/>sandbox-apigw.optum.com<br/>GraphQL Endpoint"]
+        ClaudeAPI["Anthropic Messages API<br/>api.anthropic.com<br/>claude-sonnet-4-6"]
+    end
+
+    subgraph MockLayer["Mock Data Layer<br/>(No API Keys Required)"]
+        MockElig["Mock Eligibility Responses<br/>6 scenario-matched responses<br/>300-500ms simulated delay"]
+        MockAnnot["Mock Claude Annotations<br/>Pre-written plain-English output<br/>800-1200ms simulated delay"]
+    end
+
+    %% User Flow
+    Selector --> Page
+    Page -->|"POST /api/optum/eligibility<br/>{patient: SyntheticPatient}"| Route
+    Page --> Loading
+    Page --> ResultPanel
+    ResultPanel --> ClaudePanel
+    ResultPanel --> RawPanel
+    ClaudePanel --> CoverageSummary
+    ClaudePanel --> Responsibility
+    ClaudePanel --> ActionItems
+    ClaudePanel --> RiskFlag
+
+    %% Server Flow
+    Route -->|"1. checkEligibility(patient)"| Eligibility
+    Route -->|"2. annotateEligibility(input)"| Annotator
+    Route -->|"Returns: rawResponse +<br/>annotation + durationMs"| Page
+
+    %% Service Dependencies
+    Eligibility -->|"getOptumToken()"| Auth
+    Auth -->|"Real Mode"| OptumAuth
+    Auth -->|"Dev Mode"| MockElig
+    Eligibility -->|"Real Mode:<br/>GraphQL POST"| OptumAPI
+    Eligibility -->|"Dev Mode"| MockElig
+    Annotator -->|"Real Mode:<br/>Messages API POST"| ClaudeAPI
+    Annotator -->|"Dev Mode"| MockAnnot
+
+    %% Type Dependencies
+    Route -.-> OptumTypes
+    Route -.-> ClaudeTypes
+    Route -.-> PatientTypes
+    Eligibility -.-> OptumTypes
+    Annotator -.-> ClaudeTypes
+    Patients -.-> PatientTypes
+
+    %% Styling
+    classDef browser fill:#1e293b,stroke:#4f46e5,stroke-width:2px,color:#e2e8f0
+    classDef server fill:#1e293b,stroke:#f59e0b,stroke-width:2px,color:#e2e8f0
+    classDef service fill:#1e293b,stroke:#10b981,stroke-width:2px,color:#e2e8f0
+    classDef external fill:#0f172a,stroke:#ef4444,stroke-width:2px,color:#e2e8f0
+    classDef mock fill:#0f172a,stroke:#8b5cf6,stroke-width:2px,color:#e2e8f0
+    classDef types fill:#0f172a,stroke:#64748b,stroke-width:1px,color:#94a3b8
+
+    class Page,Selector,ResultPanel,ClaudePanel,RawPanel,Loading,CoverageSummary,Responsibility,ActionItems,RiskFlag browser
+    class Route server
+    class Auth,Eligibility,Annotator,Patients service
+    class OptumAuth,OptumAPI,ClaudeAPI external
+    class MockElig,MockAnnot mock
+    class OptumTypes,ClaudeTypes,PatientTypes types
