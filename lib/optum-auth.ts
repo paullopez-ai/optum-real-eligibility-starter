@@ -6,7 +6,7 @@ interface TokenCache {
 let cachedToken: TokenCache | null = null
 
 function isDevelopmentMode(): boolean {
-  return process.env.NEXT_PUBLIC_APP_ENV === 'development' && !process.env.OPTUM_CLIENT_ID
+  return process.env.NEXT_PUBLIC_APP_ENV === 'mock'
 }
 
 export async function getOptumToken(): Promise<string> {

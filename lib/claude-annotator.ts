@@ -74,7 +74,7 @@ The response is a single eligibility record with these key sections:
 }`
 
 function isDevelopmentMode(): boolean {
-  return process.env.NEXT_PUBLIC_APP_ENV === 'development' && !process.env.ANTHROPIC_API_KEY
+  return process.env.NEXT_PUBLIC_APP_ENV === 'mock'
 }
 
 export async function annotateEligibility(input: ClaudeEligibilityInput): Promise<ClaudeEligibilityAnnotation> {

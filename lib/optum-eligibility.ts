@@ -3,7 +3,7 @@ import type { SyntheticPatient, EligibilityScenario } from '@/types/patient.type
 import { getOptumToken } from './optum-auth'
 
 function isDevelopmentMode(): boolean {
-  return process.env.NEXT_PUBLIC_APP_ENV === 'development' && !process.env.OPTUM_CLIENT_ID
+  return process.env.NEXT_PUBLIC_APP_ENV === 'mock'
 }
 
 const ELIGIBILITY_QUERY = `query CheckEligibility($input: EligibilityInput!) {

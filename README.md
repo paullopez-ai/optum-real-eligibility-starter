@@ -77,13 +77,13 @@ Open [http://localhost:3000](http://localhost:3000).
 
 ## Running Without API Keys (Mock Mode)
 
-If `NEXT_PUBLIC_APP_ENV=development` and `ANTHROPIC_API_KEY` is not set, the app runs entirely on mock data. You will see realistic eligibility responses and Claude annotations without making any real API calls. This is the default behavior when you first clone the repository.
+If `NEXT_PUBLIC_APP_ENV=mock`, the app runs entirely on fixture data. You will see realistic eligibility responses and Claude annotations without making any real API calls. This is the default when you first clone the repository.
 
 To enable mock mode explicitly:
 
 ```bash
-NEXT_PUBLIC_APP_ENV=development
-# Leave OPTUM_CLIENT_ID, OPTUM_CLIENT_SECRET, and ANTHROPIC_API_KEY unset or empty
+NEXT_PUBLIC_APP_ENV=mock
+# API keys can be left unset — they are not used in mock mode
 ```
 
 ## Project Structure
@@ -132,7 +132,7 @@ These patients use Optum's sandbox payer ID (`87726`) and are pre-configured wit
 
 ![Architecture Diagram](docs/architecture-diagram.jpg)
 
-The diagram above shows the full request flow from the browser through the application server to external services, including where mock data is used in development mode.
+The diagram above shows the full request flow from the browser through the application server to external services, including where mock data is used in mock mode.
 
 ![Optum API Eligibility Block Diagram](Optum-api-eligibility-block-diagram.jpg)
 
@@ -180,7 +180,7 @@ This project runs fully in **mock mode** with no credentials — nothing to conf
 | `OPTUM_ELIGIBILITY_URL` | For real API calls | `https://sandbox-apigw.optum.com/oihub/eligibility/v1/pre-service/member` |
 | `OPTUM_PROVIDER_TAX_ID` | For real API calls | Provider Tax ID issued with your Optum sandbox access |
 | `ANTHROPIC_API_KEY` | For Claude annotations | API key from console.anthropic.com |
-| `NEXT_PUBLIC_APP_ENV` | Optional | Set to `sandbox` or `production` to disable mock mode |
+| `NEXT_PUBLIC_APP_ENV` | Optional | `mock` (default), `sandbox`, or `production` |
 
 ## Sandbox vs. Production vs. Mock Mode
 
@@ -188,7 +188,7 @@ This starter operates in three distinct modes. Understanding the differences is 
 
 ### Mock Mode (no API keys required)
 
-When `NEXT_PUBLIC_APP_ENV=development` and no API keys are present, the app returns **hand-crafted mock data** that demonstrates what a fully working integration looks like. This is the default when you first clone the repo.
+When `NEXT_PUBLIC_APP_ENV=mock`, the app returns **hand-crafted mock data** that demonstrates what a fully working integration looks like. This is the default when you first clone the repo.
 
 Mock mode is useful for:
 - Exploring the UI and all six eligibility scenarios without any credentials
@@ -233,12 +233,10 @@ To run in production mode, update your `.env.local` with production credentials 
 
 The dev/prod decision does **not** happen at the API route level. The route at `/api/optum/eligibility` always executes. Each downstream service checks independently:
 
-| Service | Dev mode condition | Dev behavior | Prod behavior |
-|---------|-------------------|--------------|---------------|
-| Eligibility | `APP_ENV=development` AND no `OPTUM_CLIENT_ID` | Returns scenario-matched mock data (300-500ms delay) | Authenticates via OAuth, sends GraphQL query to Optum |
-| AI Annotation | `APP_ENV=development` AND no `ANTHROPIC_API_KEY` | Returns pre-written annotation (800-1200ms delay) | Sends raw eligibility + patient context to Claude API |
-
-This means you can run in **hybrid mode** — for example, real Optum data with mock AI annotations (if you have Optum keys but no Anthropic key), or mock eligibility data with real Claude analysis (if you have an Anthropic key but no Optum keys). Each service falls back to mocks independently based on which keys are present.
+| Service | Mock mode (`APP_ENV=mock`) | Real mode (`APP_ENV=sandbox/production`) |
+|---------|---------------------------|------------------------------------------|
+| Eligibility | Returns scenario-matched mock data (300-500ms delay) | Authenticates via OAuth, sends GraphQL query to Optum |
+| AI Annotation | Returns pre-written annotation (800-1200ms delay) | Sends raw eligibility + patient context to Claude API |
 
 ## License
 
