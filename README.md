@@ -1,5 +1,8 @@
 # Optum API Eligibility Starter
 
+> **Live demo:** https://optum-real-eligibility-starter.vercel.app/
+> To see a live working demo, contact me.
+
 A working Next.js starter that demonstrates how to integrate the [Optum Pre-Service Eligibility API](https://developer.optum.com) with Claude AI to translate raw insurance eligibility responses into plain-English summaries for healthcare staff.
 
 This project is a practical reference implementation. Clone it, add your API credentials, and you have a running eligibility verification interface that queries the Optum GraphQL eligibility API.
