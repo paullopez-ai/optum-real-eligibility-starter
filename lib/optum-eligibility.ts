@@ -376,7 +376,7 @@ function makeBasePCP(patient: SyntheticPatient) {
     pcpStartDate: '2023-01-01',
     pcpEndDate: '2025-12-31',
     providerNPI: patient.npi,
-    providerTIN: 'your_provider_tax_id',
+    providerTIN: '000000000',
     acoNetworkDescription: 'MINNESOTA',
     acoNetworkId: '100001',
   }

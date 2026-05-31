@@ -161,6 +161,15 @@ The Claude call is optional. If it fails or times out, the app displays the raw 
 
 **Add your own patients:** The patient list in `lib/patients.ts` is a static TypeScript array. Add objects matching the `SyntheticPatient` interface, including the Optum sandbox field values for your scenario.
 
+## Getting Optum API Access
+
+This project runs fully in **mock mode** with no credentials — nothing to configure. To call the real Optum APIs (sandbox or production), register for Optum developer access:
+
+1. Sign up at the **Optum Developer Marketplace**: https://marketplace.optum.com
+2. Create an application and subscribe to the Eligibility API for **sandbox** access.
+3. Optum issues your `OPTUM_CLIENT_ID`, `OPTUM_CLIENT_SECRET`, the token/API URLs, and your provider tax ID.
+4. Copy those into `.env.local` — **this repository ships no credentials or tax IDs**.
+
 ## Environment Variables Reference
 
 | Variable | Required | Description |
@@ -169,7 +178,7 @@ The Claude call is optional. If it fails or times out, the app displays the raw 
 | `OPTUM_CLIENT_SECRET` | For real API calls | OAuth client secret from Optum Marketplace |
 | `OPTUM_AUTH_URL` | For real API calls | `https://idx.linkhealth.com/auth/realms/developer-platform/protocol/openid-connect/token` |
 | `OPTUM_ELIGIBILITY_URL` | For real API calls | `https://sandbox-apigw.optum.com/oihub/eligibility/v1/pre-service/member` |
-| `OPTUM_PROVIDER_TAX_ID` | For real API calls | Provider Tax ID (sandbox default: `your_provider_tax_id`) |
+| `OPTUM_PROVIDER_TAX_ID` | For real API calls | Provider Tax ID issued with your Optum sandbox access |
 | `ANTHROPIC_API_KEY` | For Claude annotations | API key from console.anthropic.com |
 | `NEXT_PUBLIC_APP_ENV` | Optional | Set to `sandbox` or `production` to disable mock mode |
 
